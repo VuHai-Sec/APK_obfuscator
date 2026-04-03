@@ -72,7 +72,7 @@ def scramble_xml_element(element: Element):
 
 # ---------- HÀM THỰC THI CHÍNH CỦA PLUGIN ----------
 
-def randomize_manifest(manifest_path):
+def randomize_manifest(manifest_path, context=None):
     """
     Hàm entry point để gọi từ main.py.
     Áp dụng logic xáo trộn cấu trúc XML lên file AndroidManifest.

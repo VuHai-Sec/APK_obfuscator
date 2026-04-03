@@ -1,51 +1,84 @@
 import os
-import subprocess
 import shutil
+import subprocess
+
+from ObfuscationContext import ObfuscationContext
+
 
 class AndroidObfuscator:
     def __init__(self, apk_path, output_dir="obfuscation_working_dir"):
         self.apk_path = apk_path
         self.output_dir = output_dir
         self.smali_dir = os.path.join(self.output_dir, "smali")
-        # Thông số keystore để ký APK
         self.keystore = "debug.keystore"
         self.ks_pass = "android"
         self.alias = "androiddebugkey"
 
+    def create_context(self):
+        return ObfuscationContext(
+            apk_name=os.path.basename(self.apk_path),
+            work_dir=self.output_dir,
+        )
+
     def decompile(self):
-        print(f"[+] Đang dịch ngược {os.path.basename(self.apk_path)}...")
-        # Thêm cờ --keep-broken-res để ép Apktool xử lý các tài nguyên bị malware làm hỏng
-        subprocess.run(["apktool", "d", self.apk_path, "-o", self.output_dir, "-f", "--keep-broken-res"], check=True)
+        print(f"[+] Dang dich nguoc {os.path.basename(self.apk_path)}...")
+        subprocess.run(
+            ["apktool", "d", self.apk_path, "-o", self.output_dir, "-f", "--keep-broken-res"],
+            check=True,
+        )
 
     def _ensure_keystore(self):
-        """Tự động tạo keystore nếu chưa tồn tại"""
         if not os.path.exists(self.keystore):
-            print("[+] Đang tạo keystore để ký APK...")
+            print("[+] Dang tao keystore de ky APK...")
             cmd = [
-                "keytool", "-genkey", "-v", "-keystore", self.keystore,
-                "-storepass", self.ks_pass, "-alias", self.alias,
-                "-keypass", self.ks_pass, "-keyalg", "RSA", "-keysize", "2048",
-                "-validity", "10000", "-dname", "CN=Android Debug,O=Android,C=US"
+                "keytool",
+                "-genkey",
+                "-v",
+                "-keystore",
+                self.keystore,
+                "-storepass",
+                self.ks_pass,
+                "-alias",
+                self.alias,
+                "-keypass",
+                self.ks_pass,
+                "-keyalg",
+                "RSA",
+                "-keysize",
+                "2048",
+                "-validity",
+                "10000",
+                "-dname",
+                "CN=Android Debug,O=Android,C=US",
             ]
             subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def build_and_sign(self, output_apk):
         intermediate_apk = output_apk + ".unaligned"
-        
-        print("[+] Đang đóng gói lại APK...")
+
+        print("[+] Dang dong goi lai APK...")
         subprocess.run(["apktool", "b", self.output_dir, "-o", intermediate_apk], check=True)
 
         aligned_apk = output_apk + ".aligned"
-        print("[+] Đang tối ưu hóa bằng zipalign...")
-        subprocess.run(["zipalign", "-f", "-v", "4", intermediate_apk, aligned_apk], check=True, stdout=subprocess.DEVNULL)
+        print("[+] Dang toi uu hoa bang zipalign...")
+        subprocess.run(
+            ["zipalign", "-f", "-v", "4", intermediate_apk, aligned_apk],
+            check=True,
+            stdout=subprocess.DEVNULL,
+        )
 
         self._ensure_keystore()
-        print(f"[+] Đang ký APK: {os.path.basename(output_apk)}")
+        print(f"[+] Dang ky APK: {os.path.basename(output_apk)}")
         sign_cmd = [
-            "apksigner", "sign", "--ks", self.keystore,
-            "--ks-pass", f"pass:{self.ks_pass}",
-            "--out", output_apk,
-            aligned_apk
+            "apksigner",
+            "sign",
+            "--ks",
+            self.keystore,
+            "--ks-pass",
+            f"pass:{self.ks_pass}",
+            "--out",
+            output_apk,
+            aligned_apk,
         ]
         subprocess.run(sign_cmd, check=True)
 
@@ -53,29 +86,43 @@ class AndroidObfuscator:
             if os.path.exists(temp_file):
                 os.remove(temp_file)
 
-    def process_smali_files(self, plugin_function):
-        """Quét và áp dụng plugin lên tất cả file .smali"""
+    def process_smali_files(self, plugin_function, context=None):
         if not os.path.exists(self.output_dir):
             return
 
         for item in os.listdir(self.output_dir):
             current_path = os.path.join(self.output_dir, item)
             if os.path.isdir(current_path) and item.startswith("smali"):
+                if context is not None:
+                    context.register_smali_root(current_path)
                 for root, _, files in os.walk(current_path):
                     for file in files:
                         if file.endswith(".smali"):
                             file_path = os.path.join(root, file)
-                            plugin_function(file_path)
+                            if context is not None:
+                                context.track_smali_file(file_path)
+                            try:
+                                plugin_function(file_path, context)
+                            except Exception as exc:
+                                print(
+                                    f"[CoreManager] Warning: plugin {plugin_function.__name__} "
+                                    f"skipped {os.path.basename(file_path)} due to: {exc}"
+                                )
 
-    def process_manifest(self, plugin_function):
-        """Áp dụng plugin lên file AndroidManifest.xml"""
+    def process_manifest(self, plugin_function, context=None):
         manifest_path = os.path.join(self.output_dir, "AndroidManifest.xml")
         if os.path.exists(manifest_path):
-            plugin_function(manifest_path)
+            try:
+                plugin_function(manifest_path, context)
+            except Exception as exc:
+                print(
+                    f"[CoreManager] Warning: plugin {plugin_function.__name__} "
+                    f"skipped AndroidManifest.xml due to: {exc}"
+                )
         else:
-            print(f"[-] Cảnh báo: Không tìm thấy AndroidManifest.xml tại {manifest_path}")
+            print(f"[-] Canh bao: Khong tim thay AndroidManifest.xml tai {manifest_path}")
 
     def cleanup(self):
         if os.path.exists(self.output_dir):
             shutil.rmtree(self.output_dir)
-            print(f"[+] Đã dọn dẹp thư mục tạm: {self.output_dir}")
+            print(f"[+] Da don dep thu muc tam: {self.output_dir}")

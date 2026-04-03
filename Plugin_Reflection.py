@@ -1,62 +1,138 @@
 import os
-import re
+from typing import Optional
 
-def add_inline_reflection(smali_file_path):
-    # Lấy đường dẫn gốc của thư mục đang decompile (temp_xxx_apk)
-    parts = smali_file_path.split(os.sep)
-    try:
-        smali_index = parts.index("smali")
-        base_dir = os.sep.join(parts[:smali_index])
-    except ValueError:
+from ObfuscationContext import ObfuscationContext
+from ReflectionRegistry import ReflectionRegistry
+from SmaliUtils import (
+    extract_class_descriptor,
+    find_safe_instruction_indices,
+    is_simple_transformable_method,
+    iter_smali_methods,
+    parse_invoke_instruction,
+    split_register_tokens,
+    is_safe_non_range_register_token,
+    split_line_content,
+)
+
+
+MAX_WRAPS_PER_METHOD = 1
+SKIPPED_CLASS_PREFIXES = (
+    "Landroidx/",
+    "Landroid/support/",
+    "Lcom/google/",
+    "Lkotlin/",
+)
+
+
+def _build_fallback_context(smali_file_path: str) -> ObfuscationContext:
+    smali_root = os.path.dirname(smali_file_path)
+    while smali_root and not os.path.basename(smali_root).startswith("smali"):
+        parent = os.path.dirname(smali_root)
+        if parent == smali_root:
+            break
+        smali_root = parent
+
+    work_dir = (
+        os.path.dirname(smali_root)
+        if os.path.basename(smali_root).startswith("smali")
+        else os.path.dirname(smali_file_path)
+    )
+    context = ObfuscationContext(apk_name=os.path.basename(work_dir), work_dir=work_dir)
+    if os.path.basename(smali_root).startswith("smali"):
+        context.register_smali_root(smali_root)
+    return context
+
+
+def _transform_method(method, registry: ReflectionRegistry, context: ObfuscationContext):
+    context.track_method(method.identifier)
+    if not method.has_code or not is_simple_transformable_method(method.lines):
+        return list(method.lines), 0
+
+    updated_lines = list(method.lines)
+    wrapped_calls = 0
+    safe_indices = find_safe_instruction_indices(updated_lines, method.register_line_index)
+
+    for line_index in safe_indices:
+        if wrapped_calls >= MAX_WRAPS_PER_METHOD:
+            break
+
+        line_content, line_ending = split_line_content(updated_lines[line_index])
+        invoke = parse_invoke_instruction(line_content)
+        if invoke is None:
+            continue
+        register_tokens = split_register_tokens(invoke.registers_raw)
+        if len(register_tokens) != 1:
+            continue
+        if not all(is_safe_non_range_register_token(token) for token in register_tokens):
+            continue
+
+        wrapper = registry.get_or_create_wrapper(invoke)
+        if wrapper is None:
+            continue
+
+        updated_lines[line_index] = (
+            invoke.build_line(
+                new_opcode="invoke-static",
+                new_owner=wrapper.helper_class,
+                new_method_name=wrapper.method_name,
+                new_descriptor=wrapper.wrapper_descriptor,
+            )
+            + line_ending
+        )
+        wrapped_calls += 1
+
+    if wrapped_calls:
+        context.mark_method_modified(method.identifier)
+
+    return updated_lines, wrapped_calls
+
+
+def add_inline_reflection(smali_file_path: str, context: Optional[ObfuscationContext] = None) -> None:
+    active_context = context or _build_fallback_context(smali_file_path)
+    if active_context.is_generated_helper(smali_file_path):
         return
 
-    # Đường dẫn file Helper sẽ được tạo
-    helper_dir = os.path.join(base_dir, "smali", "com", "obfuscator")
-    helper_path = os.path.join(helper_dir, "ReflectionHelper.smali")
+    try:
+        with open(smali_file_path, "r", encoding="utf-8", newline="") as handle:
+            lines = handle.readlines()
 
-    # 1. Tạo class Helper 1 lần duy nhất cho toàn bộ APK
-    if not os.path.exists(helper_path):
-        os.makedirs(helper_dir, exist_ok=True)
-        with open(helper_path, "w", encoding="utf-8") as f:
-            f.write("""
-.class public Lcom/obfuscator/ReflectionHelper;
-.super Ljava/lang/Object;
+        class_descriptor = extract_class_descriptor(lines)
+        if class_descriptor.startswith(SKIPPED_CLASS_PREFIXES):
+            return
+        registry = ReflectionRegistry(active_context)
+        output_lines = []
+        cursor = 0
+        total_wrapped_calls = 0
 
-.method public static getLength(Ljava/lang/String;)I
-    .locals 4
-    
-    # Mã Reflection an toàn thực thi tại đây
-    const-class v0, Ljava/lang/String;
-    const-string v1, "length"
-    const/4 v2, 0x0
-    new-array v2, v2, [Ljava/lang/Class;
-    invoke-virtual {v0, v1, v2}, Ljava/lang/Class;->getDeclaredMethod(Ljava/lang/String;[Ljava/lang/Class;)Ljava/lang/reflect/Method;
-    move-result-object v0
-    
-    const/4 v1, 0x0
-    new-array v1, v1, [Ljava/lang/Object;
-    invoke-virtual {v0, p0, v1}, Ljava/lang/reflect/Method;->invoke(Ljava/lang/Object;[Ljava/lang/Object;)Ljava/lang/Object;
-    move-result-object v0
-    
-    check-cast v0, Ljava/lang/Integer;
-    invoke-virtual {v0}, Ljava/lang/Integer;->intValue()I
-    move-result v0
-    
-    return v0
-.end method
-""")
+        for method in iter_smali_methods(lines, class_descriptor):
+            output_lines.extend(lines[cursor : method.start_index])
+            try:
+                transformed_lines, wrapped_calls = _transform_method(method, registry, active_context)
+            except Exception as exc:
+                transformed_lines = list(method.lines)
+                wrapped_calls = 0
+                print(
+                    f"[Reflection Plugin] Warning: skipped unsafe method in "
+                    f"{os.path.basename(smali_file_path)}: {exc}"
+                )
+            output_lines.extend(transformed_lines)
+            total_wrapped_calls += wrapped_calls
+            cursor = method.end_index + 1
 
-    # 2. Quét file smali hiện tại và đổi lời gọi hàm
-    with open(smali_file_path, "r", encoding="utf-8") as f:
-        content = f.read()
+        output_lines.extend(lines[cursor:])
 
-    # Tìm lệnh: invoke-virtual {vX}, Ljava/lang/String;->length()I
-    pattern = re.compile(r'invoke-virtual\s+\{([vp]\d+)\},\s+Ljava/lang/String;->length\(\)I')
-    
-    # Thay bằng: invoke-static {vX}, Lcom/obfuscator/ReflectionHelper;->getLength(Ljava/lang/String;)I
-    new_content, count = pattern.subn(r'invoke-static {\1}, Lcom/obfuscator/ReflectionHelper;->getLength(Ljava/lang/String;)I', content)
+        if output_lines != lines:
+            with open(smali_file_path, "w", encoding="utf-8", newline="") as handle:
+                handle.writelines(output_lines)
 
-    if count > 0:
-        with open(smali_file_path, "w", encoding="utf-8") as f:
-            f.write(new_content)
-        print(f"[Reflection Plugin] Đã chuyển đổi {count} lệnh sang Reflection an toàn tại: {os.path.basename(smali_file_path)}")
+        if total_wrapped_calls:
+            active_context.record_api_calls_wrapped(total_wrapped_calls)
+            print(
+                f"[Reflection Plugin] Wrapped {total_wrapped_calls} API call(s) in: "
+                f"{os.path.basename(smali_file_path)}"
+            )
+    except Exception as exc:
+        print(
+            f"[Reflection Plugin] Warning: kept original file due to transform failure in "
+            f"{os.path.basename(smali_file_path)}: {exc}"
+        )
