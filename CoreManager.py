@@ -109,19 +109,6 @@ class AndroidObfuscator:
                                     f"skipped {os.path.basename(file_path)} due to: {exc}"
                                 )
 
-    def process_manifest(self, plugin_function, context=None):
-        manifest_path = os.path.join(self.output_dir, "AndroidManifest.xml")
-        if os.path.exists(manifest_path):
-            try:
-                plugin_function(manifest_path, context)
-            except Exception as exc:
-                print(
-                    f"[CoreManager] Warning: plugin {plugin_function.__name__} "
-                    f"skipped AndroidManifest.xml due to: {exc}"
-                )
-        else:
-            print(f"[-] Canh bao: Khong tim thay AndroidManifest.xml tai {manifest_path}")
-
     def cleanup(self):
         if os.path.exists(self.output_dir):
             shutil.rmtree(self.output_dir)

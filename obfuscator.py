@@ -8,8 +8,7 @@ sys.path.insert(0, base_dir)
 from CoreManager import AndroidObfuscator
 from Plugin_Encryption import encrypt_strings
 from Plugin_Opaque import add_opaque_predicates
-from Plugin_RandomManifest import randomize_manifest
-from Plugin_Reflection import add_inline_reflection
+from Plugin_CallIndirection import add_call_indirection
 
 
 def run_obfuscation(input_dir, output_dir, algorithms):
@@ -20,15 +19,17 @@ def run_obfuscation(input_dir, output_dir, algorithms):
         os.makedirs(output_path)
 
     algo_map = {
-        "RM": ("Random Manifest", randomize_manifest, "manifest"),
-        "SE": ("String Encryption", encrypt_strings, "smali"),
-        "OP": ("Opaque Predicates", add_opaque_predicates, "smali"),
-        "RF": ("Reflection Wrappers", add_inline_reflection, "smali"),
+        "SE": ("String Encryption", encrypt_strings),
+        "OP": ("Opaque Predicates", add_opaque_predicates),
+        "CI": ("Call Indirection", add_call_indirection),
     }
 
     selected_algos = []
     for alg in algorithms:
         alg_upper = alg.upper()
+        if alg_upper == "RF":
+            print("[!] RF da duoc doi ten thanh CI. Tu dong su dung Call Indirection.")
+            alg_upper = "CI"
         if alg_upper in algo_map:
             selected_algos.append(algo_map[alg_upper])
         else:
@@ -38,7 +39,7 @@ def run_obfuscation(input_dir, output_dir, algorithms):
         print("[-] Khong co thuat toan hop le nao duoc chon. Dung chuong trinh.")
         return
 
-    print(f"[*] Cac thuat toan se ap dung: {', '.join([name for name, _, _ in selected_algos])}")
+    print(f"[*] Cac thuat toan se ap dung: {', '.join([name for name, _ in selected_algos])}")
 
     for file_name in os.listdir(input_path):
         if not file_name.endswith(".apk"):
@@ -56,11 +57,8 @@ def run_obfuscation(input_dir, output_dir, algorithms):
         try:
             obf.decompile()
 
-            for _, func, target_type in selected_algos:
-                if target_type == "manifest":
-                    obf.process_manifest(func, context)
-                elif target_type == "smali":
-                    obf.process_smali_files(func, context)
+            for _, func in selected_algos:
+                obf.process_smali_files(func, context)
 
             obf.build_and_sign(output_apk_name)
             print(f"[ thanh cong ] File luu tai: {output_apk_name}")
@@ -90,7 +88,7 @@ if __name__ == "__main__":
         "--algorithms",
         nargs="+",
         required=True,
-        help="Danh sach thuat toan, cach nhau bang khoang trang (RM, SE, OP, RF)",
+        help="Danh sach thuat toan, cach nhau bang khoang trang (SE, OP, CI)",
     )
 
     args = parser.parse_args()

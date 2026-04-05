@@ -1,0 +1,24 @@
+flowchart TD
+    A([Bat dau]) --> B[Nhap tham so dau vao]
+    B --> C[Chon thuat toan lam roi]
+    C --> D[Duyet cac tep APK]
+
+    subgraph S1 [Giai doan chuan bi]
+        D --> E[Khoi tao thu muc tam va ngu canh]
+        E --> F[Dich nguoc APK]
+    end
+
+    subgraph S2 [Giai doan lam roi]
+        F --> G[Ap dung cac plugin da chon]
+        G --> H[Xu ly cac tep smali voi SE, OP, CI]
+    end
+
+    subgraph S3 [Giai doan hoan thien]
+        H --> I[Dong goi lai APK, Zipalign va ki so]
+        I --> J[Luu ket qua dau ra]
+        J --> K[Thong ke va don dep]
+    end
+
+    K --> L{Con APK tiep theo khong}
+    L -->|Co| D
+    L -->|Khong| M([Ket thuc])
