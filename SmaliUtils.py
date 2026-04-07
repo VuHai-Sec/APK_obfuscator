@@ -121,6 +121,7 @@ class InvokeInstruction:
 
 
 def get_line_ending(line: str) -> str:
+    # lấy kiểu kí tự xuống dòng mà code đang dùng
     if line.endswith("\r\n"):
         return "\r\n"
     if line.endswith("\n"):
@@ -138,6 +139,7 @@ def split_line_content(line: str) -> Tuple[str, str]:
 
 
 def classify_method_line(line: str) -> str:
+    # phân loại method
     content, _ = split_line_content(line)
     stripped = content.strip()
 
@@ -172,6 +174,7 @@ def extract_class_descriptor(lines: Sequence[str]) -> str:
 
 
 def find_register_directive_index(method_lines: Sequence[str]) -> int:
+    # tìm dòng ".registers" hoặc ".locals"
     for index in range(1, len(method_lines) - 1):
         category = classify_method_line(method_lines[index])
         if category == "register":
@@ -180,6 +183,7 @@ def find_register_directive_index(method_lines: Sequence[str]) -> int:
 
 
 def iter_smali_methods(lines: Sequence[str], class_descriptor: str) -> Iterator[SmaliMethod]:
+    # liệt kê các method 
     index = 0
     while index < len(lines):
         if not lines[index].lstrip().startswith(".method "):
@@ -344,6 +348,9 @@ def replace_param_v_registers_with_p_aliases(
 
 
 def is_simple_transformable_method(method_lines: Sequence[str]) -> bool:
+    # điều kiện: Có dòng thanh ghi
+    # Không phải abstract, native
+    # không chứa các phép phức tạp như annotation, try-catch, payload đặc biệt
     register_line_index = find_register_directive_index(method_lines)
     if register_line_index == -1:
         return False
@@ -367,6 +374,9 @@ def is_simple_transformable_method(method_lines: Sequence[str]) -> bool:
 
 
 def find_safe_instruction_indices(method_lines: Sequence[str], register_line_index: int) -> List[int]:
+    # tìm mọi lệnh có vẻ an toàn
+    # đảm bảo simple
+    # có register_line_index hợp lệ
     if register_line_index == -1 or not is_simple_transformable_method(method_lines):
         return []
 
@@ -378,6 +388,7 @@ def find_safe_instruction_indices(method_lines: Sequence[str], register_line_ind
 
 
 def find_safe_entry_insertion_index(method_lines: Sequence[str], register_line_index: int) -> int:
+    # lấy 1 lệnh an toàn đầu tiên
     safe_indices = find_safe_instruction_indices(method_lines, register_line_index)
     if not safe_indices:
         return -1
@@ -387,18 +398,24 @@ def find_safe_entry_insertion_index(method_lines: Sequence[str], register_line_i
 def ensure_extra_locals(
     method_lines: Sequence[str], extra_needed: int
 ) -> Optional[Tuple[List[str], List[str], int]]:
+    # Kiểm tra xem có thể thêm extra_needed biến cục bộ không
     register_line_index = find_register_directive_index(method_lines)
     if register_line_index == -1 or extra_needed <= 0:
+        # thấy dòng .registers hoặc .locals
         return None
     if not is_simple_transformable_method(method_lines):
+        # hàm abstract / native
         return None
-
+    #chuẩn bị dữ liệu để làm rối
     updated_lines = list(method_lines)
     directive_content, directive_ending = split_line_content(updated_lines[register_line_index])
     parameter_register_count = count_parameter_registers(updated_lines[0])
 
     locals_match = LOCALS_PATTERN.match(directive_content)
     if locals_match:
+        # nếu file dùng .local:
+        # kiểm tra số biến mới < 255
+        # không cho số thanh ghi > 15
         original_locals = int(locals_match.group("count"))
         new_locals = original_locals + extra_needed
         if new_locals - 1 > 255:
@@ -416,18 +433,23 @@ def ensure_extra_locals(
             f'{locals_match.group("indent")}.locals {new_locals}'
             f'{locals_match.group("suffix")}{directive_ending}'
         )
+        #duyệt code, thay v... thành p0, p1, p2
+        # cập nhật .locals
         temp_registers = [f"v{original_locals + offset}" for offset in range(extra_needed)]
         return updated_lines, temp_registers, register_line_index
 
+    # trường hợp .registers
     registers_match = REGISTERS_PATTERN.match(directive_content)
     if not registers_match:
         return None
-
+    # Tìm số registers
     original_registers = int(registers_match.group("count"))
     original_locals = original_registers - parameter_register_count
     if original_locals < 0:
+        # số register còn lại < 0 -> Bỏ
         return None
 
+    # tương tự .locals
     new_locals = original_locals + extra_needed
     if new_locals - 1 > 255:
         return None
@@ -444,14 +466,16 @@ def ensure_extra_locals(
         f'{registers_match.group("suffix")}{directive_ending}'
     )
     temp_registers = [f"v{original_locals + offset}" for offset in range(extra_needed)]
+    # return: Code đã sửa, biến cục bộ tạm, vị trí.
     return updated_lines, temp_registers, register_line_index
 
 
 def parse_invoke_instruction(line: str) -> Optional[InvokeInstruction]:
+    # kiểm tra xem có phải dòng chứa invoke không
     match = INVOKE_PATTERN.match(line)
     if not match:
         return None
-
+    # tách các thành phần trong opcode đó
     return InvokeInstruction(
         indent=match.group("indent"),
         opcode=match.group("opcode"),
@@ -493,6 +517,7 @@ def find_last_exit_index(method_lines: Sequence[str], register_line_index: int) 
 
 
 def find_indent_after_registers(method_lines: Sequence[str], register_line_index: int) -> str:
+    #tính độ thụt đầu dòng
     safe_entry_index = find_safe_entry_insertion_index(method_lines, register_line_index)
     if safe_entry_index == -1:
         return "    "
@@ -506,6 +531,7 @@ def next_local_label(prefix: str) -> str:
 
 
 def method_hash_seed(value: str) -> int:
+    # tạo seed
     return sum(ord(char) for char in value)
 
 

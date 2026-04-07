@@ -10,6 +10,9 @@ class OpaqueTemplate:
     name: str
     temp_register_count: int
     build: Callable[[str, Sequence[str], LabelFactory], List[str]]
+    # indent: mức tụt đầu dòng
+    # Sequece[str] : Các thanh ghi tạm
+    # label_factory: Tạo label khác nhau
 
 
 def _arithmetic_invariant(indent: str, temps: Sequence[str], label_factory: LabelFactory) -> List[str]:

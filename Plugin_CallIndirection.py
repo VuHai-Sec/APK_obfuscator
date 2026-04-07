@@ -53,25 +53,32 @@ def _transform_method(
     updated_lines = list(method.lines)
     wrapped_calls = 0
     safe_indices = find_safe_instruction_indices(updated_lines, method.register_line_index)
+    # tìm những lệnh an toàn
 
     for line_index in safe_indices:
+        # giới hạn số wrapper_call trong 1phuongw thức
         if wrapped_calls >= MAX_WRAPS_PER_METHOD:
             break
-
+        # cắt nội dung và ending
         line_content, line_ending = split_line_content(updated_lines[line_index])
+        # Tách các thành phần trong opcode đó
         invoke = parse_invoke_instruction(line_content)
         if invoke is None:
             continue
+        # lấy các thanh ghi
         register_tokens = split_register_tokens(invoke.registers_raw)
         if len(register_tokens) != 1:
             continue
+        # make sure chỉ có non-range invoke
         if not all(is_safe_non_range_register_token(token) for token in register_tokens):
             continue
-
+        
+        # lấy hoặc tạo wrapper
         wrapper = registry.get_or_create_wrapper(invoke)
         if wrapper is None:
             continue
-
+        
+        # ghép lại 1 dòng invoke
         updated_lines[line_index] = (
             invoke.build_line(
                 new_opcode="invoke-static",
@@ -92,17 +99,21 @@ def _transform_method(
 def add_call_indirection(
     smali_file_path: str, context: Optional[ObfuscationContext] = None
 ) -> None:
+    
+    # kiểm tra xem có phải helper class do công cụ tạo ra không?
     active_context = context or _build_fallback_context(smali_file_path)
     if active_context.is_generated_helper(smali_file_path):
         return
 
     try:
+        # đọc toàn bộ nội dung file
         with open(smali_file_path, "r", encoding="utf-8", newline="") as handle:
             lines = handle.readlines()
-
+        # lấy mô tả class
         class_descriptor = extract_class_descriptor(lines)
         if class_descriptor.startswith(SKIPPED_CLASS_PREFIXES):
             return
+        # tạo đối tượng CIRegistry 
         registry = CallIndirectionRegistry(active_context)
         output_lines = []
         cursor = 0
@@ -111,8 +122,10 @@ def add_call_indirection(
         for method in iter_smali_methods(lines, class_descriptor):
             output_lines.extend(lines[cursor : method.start_index])
             try:
+                # thêm đoạn CI làm rối
                 transformed_lines, wrapped_calls = _transform_method(method, registry, active_context)
             except Exception as exc:
+                # xảy ra lỗi thì nên skip
                 transformed_lines = list(method.lines)
                 wrapped_calls = 0
                 print(
@@ -124,7 +137,7 @@ def add_call_indirection(
             cursor = method.end_index + 1
 
         output_lines.extend(lines[cursor:])
-
+        # viết phần CI vào 
         if output_lines != lines:
             with open(smali_file_path, "w", encoding="utf-8", newline="") as handle:
                 handle.writelines(output_lines)

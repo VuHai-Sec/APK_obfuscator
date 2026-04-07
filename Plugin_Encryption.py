@@ -39,6 +39,7 @@ def contains_surrogate_codepoint(value: str) -> bool:
 
 
 def smali_unescape_string(literal: str) -> str:
+    # xử lý các ký tự escape trước khi mã hoá
     result: List[str] = []
     index = 0
 
@@ -85,6 +86,7 @@ def smali_unescape_string(literal: str) -> str:
 
 
 def should_encrypt_string(value: str) -> bool:
+    # kiểm duyệt, tránh mã hoá những chuỗi nguy hiểm
     if not value or value.isspace():
         return False
     if value == UTF8_LITERAL:
@@ -107,6 +109,7 @@ def should_encrypt_string(value: str) -> bool:
 
 
 def replace_const_string_with_runtime_decode(
+    # thêm runtime-decode
     line: str, temp_registers: Tuple[str, str, str]
 ) -> Optional[List[str]]:
     line_content, line_ending = split_line_content(line)
@@ -134,6 +137,7 @@ def replace_const_string_with_runtime_decode(
     suffix = match.group("suffix")
 
     return [
+        # chia 16 tránh lỗi thanh ghi
         f'{indent}{opcode} {string_register}, "{encoded_value}"{suffix}{line_ending}',
         f"{indent}const/16 {bytes_register}, 0x0{line_ending}",
         (
@@ -154,14 +158,17 @@ def replace_const_string_with_runtime_decode(
 
 
 def transform_method(method_lines: Sequence[str]) -> Tuple[List[str], int]:
+    # kiểm tra method có đủ an toàn để biến đổi khôgn?
     register_line_index = find_register_directive_index(method_lines)
     if register_line_index == -1 or not is_simple_transformable_method(method_lines):
         return list(method_lines), 0
 
+    # Lấy các biến tạm mới
     prepared = ensure_extra_locals(method_lines, EXTRA_LOCAL_COUNT)
     if prepared is None:
         return list(method_lines), 0
 
+    # lấy danh sách lệnh an toàn
     prepared_lines, temp_registers, register_line_index = prepared
     safe_instruction_indices = set(find_safe_instruction_indices(prepared_lines, register_line_index))
     if not safe_instruction_indices:
@@ -191,6 +198,7 @@ def transform_method(method_lines: Sequence[str]) -> Tuple[List[str], int]:
         replacements += 1
 
     transformed_lines.append(prepared_lines[-1])
+    # thêm giải mã runtime vào code
 
     if replacements == 0:
         return list(method_lines), 0
@@ -199,18 +207,21 @@ def transform_method(method_lines: Sequence[str]) -> Tuple[List[str], int]:
 
 
 def encrypt_strings(smali_file_path: str, context: Optional[ObfuscationContext] = None) -> None:
+    # kiểm tra xem đây có phải helper do công cụ khác sinh không?
     if context is not None and context.is_generated_helper(smali_file_path):
         return
 
     try:
+        # đọc toàn bộ file
         with open(smali_file_path, "r", encoding="utf-8", newline="") as handle:
             lines = handle.readlines()
-
         method_identifiers = {}
         if context is not None:
+            # lấy descriptor của class
             class_descriptor = extract_class_descriptor(lines)
             method_identifiers = {
-                method.start_index: method.identifier
+                #duyệt từng method
+                method.start_index: method.identifier 
                 for method in iter_smali_methods(lines, class_descriptor)
             }
         else:
@@ -219,13 +230,14 @@ def encrypt_strings(smali_file_path: str, context: Optional[ObfuscationContext] 
         output_lines: List[str] = []
         cursor = 0
         total_replacements = 0
-
+        #duyệt từng method
         for method in iter_smali_methods(lines, class_descriptor):
             output_lines.extend(lines[cursor : method.start_index])
             method_identifier = method_identifiers.get(method.start_index)
             if context is not None and method_identifier is not None:
                 context.track_method(method_identifier)
 
+            # với mỗi method, gọi transform_method
             try:
                 transformed_block, replacement_count = transform_method(method.lines)
             except Exception as exc:

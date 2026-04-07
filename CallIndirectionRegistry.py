@@ -24,13 +24,18 @@ class CallIndirectionRegistry:
         self.context = context
 
     def get_or_create_wrapper(self, invoke: InvokeInstruction) -> Optional[WrapperSpec]:
+        # Kiểm tra xem có hỗ trợ lời gọi này không
+        
         if not self._is_supported(invoke):
             return None
 
         key = (invoke.base_opcode, invoke.owner, invoke.method_name, invoke.descriptor)
+        # kiểm tra xem đã có lớp bao chưa, rồi thì dùng luôn
         cached = self.context.wrapper_signatures.get(key)
         if cached is not None:
             return cached
+
+        # chưa có thì tạo mới:
 
         wrapper_descriptor = self._build_wrapper_descriptor(invoke)
         if wrapper_descriptor is None:
@@ -52,6 +57,7 @@ class CallIndirectionRegistry:
         try:
             os.makedirs(os.path.dirname(helper_path), exist_ok=True)
             with open(helper_path, "w", encoding="utf-8", newline="") as handle:
+                # sinh nội dung hoàn chỉnh cho helper class
                 handle.write(self._build_helper_class(wrapper))
         except OSError:
             return None
@@ -62,6 +68,10 @@ class CallIndirectionRegistry:
         return wrapper
 
     def _is_supported(self, invoke: InvokeInstruction) -> bool:
+        # loại nếu:
+        # invoke range
+        # owner bắt đầu bằng package helper
+        # method bắt đầu bằng "<" 
         if invoke.is_range:
             return False
         if invoke.owner.startswith(f"L{self.context.helper_package}/"):

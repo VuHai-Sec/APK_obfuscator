@@ -36,6 +36,7 @@ def _build_fallback_context(smali_file_path: str) -> ObfuscationContext:
 
 
 def _build_label_factory(context: Optional[ObfuscationContext]):
+    # tạo nhãn
     if context is None:
         return next_local_label
     return context.next_label
@@ -43,11 +44,14 @@ def _build_label_factory(context: Optional[ObfuscationContext]):
 
 def _transform_method(method, context: ObfuscationContext):
     context.track_method(method.identifier)
+    # kiểm tra độ đơn giản của method
     if not method.has_code or not is_simple_transformable_method(method.lines):
         return list(method.lines), 0
 
     seed = method_hash_seed(method.identifier)
+    # chọn template ngẫy nhiên
     template = OPAQUE_TEMPLATES[seed % len(OPAQUE_TEMPLATES)]
+    # thêm các biến tạm (thanh ghi)
     prepared = ensure_extra_locals(method.lines, template.temp_register_count)
     if prepared is None:
         return list(method.lines), 0
@@ -57,27 +61,35 @@ def _transform_method(method, context: ObfuscationContext):
     if entry_index == -1:
         return list(method.lines), 0
 
+    # độ thụt đầu dòng
     indent = find_indent_after_registers(updated_lines, register_line_index)
+    # copy kiểu kí tự xuống dòng đang dùng
     line_ending = get_line_ending(updated_lines[register_line_index])
+    # chuẩn bị cơ chế sinh nhãn label (tên nhãn) cho đoạn rẽ nhánh sắp tới
     label_factory = _build_label_factory(context)
+    # gọi template.build để sinh đoạn opaque
     block_lines = template.build(indent, temp_registers[: template.temp_register_count], label_factory)
     if not block_lines:
         return list(method.lines), 0
-
+    # chèn đoạn opaque vừa sinh vào
     updated_lines[entry_index:entry_index] = [f"{line}{line_ending}" for line in block_lines]
     context.mark_method_modified(method.identifier)
     return updated_lines, 1
 
 
 def add_opaque_predicates(smali_file_path: str, context: Optional[ObfuscationContext] = None) -> None:
+    # tạo context mới nếu chưa có
+    # bỏ qua helper class tự sinh
     active_context = context or _build_fallback_context(smali_file_path)
     if active_context.is_generated_helper(smali_file_path):
         return
 
     try:
+        #đọc file
         with open(smali_file_path, "r", encoding="utf-8", newline="") as handle:
             lines = handle.readlines()
 
+        #lấy ra class descriptor
         class_descriptor = extract_class_descriptor(lines)
         output_lines = []
         cursor = 0
@@ -86,6 +98,7 @@ def add_opaque_predicates(smali_file_path: str, context: Optional[ObfuscationCon
         for method in iter_smali_methods(lines, class_descriptor):
             output_lines.extend(lines[cursor : method.start_index])
             try:
+                # gọi biến đổi method
                 transformed_lines, inserted_blocks = _transform_method(method, active_context)
             except Exception as exc:
                 transformed_lines = list(method.lines)
@@ -105,6 +118,7 @@ def add_opaque_predicates(smali_file_path: str, context: Optional[ObfuscationCon
                 handle.writelines(output_lines)
 
         if total_blocks:
+            # ghi lại thông tin vào Context
             active_context.record_opaque_blocks(total_blocks)
             print(
                 f"[Opaque Plugin] Inserted {total_blocks} opaque block(s) in: "

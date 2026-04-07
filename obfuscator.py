@@ -24,6 +24,7 @@ def run_obfuscation(input_dir, output_dir, algorithms):
         "CI": ("Call Indirection", add_call_indirection),
     }
 
+    # kiểm tra xem có những thuật toán nào
     selected_algos = []
     for alg in algorithms:
         alg_upper = alg.upper()
@@ -41,7 +42,9 @@ def run_obfuscation(input_dir, output_dir, algorithms):
 
     print(f"[*] Cac thuat toan se ap dung: {', '.join([name for name, _ in selected_algos])}")
 
+
     for file_name in os.listdir(input_path):
+        # có phải apk không?
         if not file_name.endswith(".apk"):
             continue
 
@@ -52,14 +55,16 @@ def run_obfuscation(input_dir, output_dir, algorithms):
         work_dir = os.path.join(base_dir, f"temp_{file_name.replace('.', '_')}")
 
         obf = AndroidObfuscator(apk_full_path, output_dir=work_dir)
+        # lấy context
         context = obf.create_context()
 
         try:
+            # decompile (ngược với biên dịch)
             obf.decompile()
-
+            # thực thi từng plugin
             for _, func in selected_algos:
                 obf.process_smali_files(func, context)
-
+            # build lại và ký
             obf.build_and_sign(output_apk_name)
             print(f"[ thanh cong ] File luu tai: {output_apk_name}")
         except Exception as e:
@@ -93,3 +98,4 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     run_obfuscation(args.input, args.output, args.algorithms)
+ 

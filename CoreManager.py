@@ -87,6 +87,7 @@ class AndroidObfuscator:
                 os.remove(temp_file)
 
     def process_smali_files(self, plugin_function, context=None):
+        # kiểm tra file smali, gọi hàm thực thi
         if not os.path.exists(self.output_dir):
             return
 
