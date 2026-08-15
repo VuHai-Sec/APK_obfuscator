@@ -1,24 +1,25 @@
 flowchart TD
-    A([Bat dau]) --> B[Nhap tham so dau vao]
-    B --> C[Chon thuat toan lam roi]
-    C --> D[Duyet cac tep APK]
+    A([Bắt đầu]) --> B[Đọc tham số đầu vào]
+    B --> C[Kiểm tra và chọn plugin]
+    C --> D{Còn APK cần xử lý?}
 
-    subgraph S1 [Giai doan chuan bi]
-        D --> E[Khoi tao thu muc tam va ngu canh]
-        E --> F[Dich nguoc APK]
+    subgraph S1 [Giai đoạn chuẩn bị]
+        D -->|Có| E[Khởi tạo thư mục tạm và ngữ cảnh]
+        E --> F[Apktool dịch ngược APK]
+        F --> G[Duyệt các thư mục smali]
     end
 
-    subgraph S2 [Giai doan lam roi]
-        F --> G[Ap dung cac plugin da chon]
-        G --> H[Xu ly cac tep smali voi SE, OP, CI]
+    subgraph S2 [Giai đoạn làm rối]
+        G --> H[Áp dụng SE, OP, CI theo thứ tự đã chọn]
     end
 
-    subgraph S3 [Giai doan hoan thien]
-        H --> I[Dong goi lai APK, Zipalign va ki so]
-        I --> J[Luu ket qua dau ra]
-        J --> K[Thong ke va don dep]
+    subgraph S3 [Giai đoạn hoàn thiện]
+        H --> I[Apktool đóng gói lại APK]
+        I --> J[Zipalign căn chỉnh]
+        J --> K[Apksigner ký APK]
+        K --> L[Lưu kết quả và in thống kê]
+        L --> M[Dọn dẹp thư mục tạm]
     end
 
-    K --> L{Con APK tiep theo khong}
-    L -->|Co| D
-    L -->|Khong| M([Ket thuc])
+    M --> D
+    D -->|Không| N([Kết thúc])
